@@ -6,11 +6,17 @@ name: Checks
 
 on:
   push:
+    paths-ignore: ["README.md", "docs/**"]
   pull_request:
+    paths-ignore: ["README.md", "docs/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  # On a tag, the program's version is the tag's; otherwise build.py takes git describe.
+  REVO_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 jobs:
   ps2-code:
@@ -55,7 +61,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: revolution-windows-x64
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
 
   macos:
     runs-on: macos-15
@@ -69,11 +77,11 @@ jobs:
       - name: Build
         run: "$(brew --prefix)/bin/python3 build.py build"
       - name: Archive
-        run: tar -C build/native -czf revolution-macos-arm64.tar.gz revolution
+        run: tar -C build/native -czf "RaymanRe-Revolution-${REVO_VERSION:-$(git describe --tags --always)}-macos-arm64.tar.gz" revolution
       - uses: actions/upload-artifact@v4
         with:
           name: revolution-macos-arm64
-          path: revolution-macos-arm64.tar.gz
+          path: RaymanRe-Revolution-*-macos-arm64.tar.gz
 
   linux:
     runs-on: ubuntu-24.04
@@ -92,8 +100,32 @@ jobs:
       - name: Build
         run: /usr/bin/python3 build.py build
       - name: Archive
-        run: tar -C build/native -czf revolution-linux-x64.tar.gz revolution
+        run: tar -C build/native -czf "RaymanRe-Revolution-${REVO_VERSION:-$(git describe --tags --always)}-linux-x64.tar.gz" revolution
       - uses: actions/upload-artifact@v4
         with:
           name: revolution-linux-x64
-          path: revolution-linux-x64.tar.gz
+          path: RaymanRe-Revolution-*-linux-x64.tar.gz
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [ps2-code, windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Attach the files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l release
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --draft --verify-tag --title "$TAG" --notes ""
+          fi
