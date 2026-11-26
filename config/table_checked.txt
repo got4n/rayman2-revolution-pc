@@ -1,0 +1,3 @@
+# Entries of the game's tables of functions whose C type is not their
+# table's, looked at and found right (tools/check_tables.py): one name a
+# line, with why after a #.

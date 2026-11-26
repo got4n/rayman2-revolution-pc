@@ -1,0 +1,50 @@
+# build output
+/build/
+__pycache__/
+.DS_Store
+
+# made from your own copy of the game: never commit these
+decomp/asm/
+decomp/build/
+decomp/assets/
+decomp/iso/
+decomp/expected/
+ubisound/UBISOUND.IRX
+ubisound/asm/
+ubisound/assets/
+ubisound/build/
+
+# local tools
+.toolchain/
+
+# the decomp's PS2 build: generated files and installed tools
+decomp/build.ninja
+decomp/compile_commands.json
+decomp/objdiff.json
+decomp/.ninja_log
+decomp/.ninja_deps
+decomp/.splache
+decomp/*.ld
+decomp/.i386-root/
+decomp/.venv/
+decomp/tools/objdiff/objdiff-cli
+decomp/tools/slinky/slinky-cli
+decomp/config/revo.slinky.yaml
+decomp/permuter_settings.toml
+
+# ninja run at the top of the tree
+/.ninja_log
+/.ninja_deps
+
+# release packages (tools/package.py)
+/dist/
+
+# never commit game data, disc images or saves
+*.iso
+*.bin
+*.cue
+*.mdf
+SLUS_201.38
+GAME.BF
+GAME.DSC
+memcard0/

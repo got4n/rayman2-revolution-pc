@@ -1,0 +1,98 @@
+name: Checks
+
+# Checks that the PS2 code is the decomp's once the PC_PORT blocks are taken out, that the Python tools
+# compile and that no game data is committed, then builds the program for Windows (with the release zip),
+# macOS (Apple Silicon) and Linux (x86-64). The build doesn't need the game.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ps2-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: PS2 code is the decompilation's
+        run: python tools/check_ps2.py
+      - name: Python tools compile
+        run: python -m compileall -q build.py tools
+      - name: No game data in the tree
+        run: |
+          bad=$(git ls-files | grep -iE '(^|/)(SLUS_201\.38|GAME\.BF|GAME\.DSC|SYSTEM\.CNF)$|\.(iso|cue|mdf|irx|pss|elf)$' || true)
+          if [ -n "$bad" ]; then echo "game data committed:"; echo "$bad"; exit 1; fi
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-lld mingw-w64-clang-x86_64-llvm
+            mingw-w64-clang-x86_64-ninja mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-pkgconf mingw-w64-clang-x86_64-sdl2-compat mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-glslang git
+      - name: Build
+        run: python build.py build
+      - name: Package
+        run: python tools/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revolution-windows-x64
+          path: dist/*.zip
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tools
+        run: brew install llvm ninja sdl2 ffmpeg pkg-config molten-vk glslang unifdef python
+      # Homebrew's Python: the one Homebrew's LLVM has its clang bindings for.
+      - name: Build
+        run: "$(brew --prefix)/bin/python3 build.py build"
+      - name: Archive
+        run: tar -C build/native -czf revolution-macos-arm64.tar.gz revolution
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revolution-macos-arm64
+          path: revolution-macos-arm64.tar.gz
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # clang 20: Ubuntu 24.04's default clang 18 fails on the game's C (tools/native/target.py takes the newest
+      # /usr/lib/llvm-N).
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-20 lld-20 llvm-20 python3-clang-20 libclang-20-dev ninja-build \
+            pkg-config libsdl2-dev libavcodec-dev libavutil-dev libvulkan-dev glslang-tools unifdef
+      # The system's Python: the one apt's python3-clang-20 is for.
+      - name: Build
+        run: /usr/bin/python3 build.py build
+      - name: Archive
+        run: tar -C build/native -czf revolution-linux-x64.tar.gz revolution
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revolution-linux-x64
+          path: revolution-linux-x64.tar.gz
