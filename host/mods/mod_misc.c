@@ -59,8 +59,18 @@ void pc_mod_load_mark(int32_t step) {
     }
 }
 
+/* The warm-up ends after the level's first frames. Some levels (Dogfight) start with the engine frozen, which holds
+   its frame count: they end it after as many displayed frames, or their fade-in never starts. */
 void pc_mod_load_frame(int32_t frame) {
-    if (g_warm_up && frame >= 6) g_warm_up = 0;
+    static int shown;
+    if (!g_warm_up) {
+        shown = 0;
+        return;
+    }
+    if (frame >= 6 || ++shown >= 6) {
+        g_warm_up = 0;
+        shown = 0;
+    }
 }
 
 int32_t pc_mod_fade_in_step(int32_t step) {
