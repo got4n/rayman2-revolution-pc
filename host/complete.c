@@ -176,6 +176,30 @@ static long long modified(const char *path) {
     return stat(path, &st) ? -1 : (long long)st.st_mtime;
 }
 
+const char *revo_version(void);
+
+static int same_version(const char *path) {
+    char want[96];
+    const int n = snprintf(want, sizeof want, "REVO_VERSION=%s", revo_version()) + 1;
+    if (n <= 1 || n > (int)sizeof want) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    enum { CHUNK = 1 << 20 };
+    char *buf = malloc(CHUNK + sizeof want);
+    int found = 0;
+    size_t kept = 0, got;
+    while (buf && !found && (got = fread(buf + kept, 1, CHUNK, f)) > 0) {
+        const size_t len = kept + got;
+        for (size_t i = 0; i + (size_t)n <= len && !found; i++)
+            found = buf[i] == 'R' && !memcmp(buf + i, want, (size_t)n);
+        kept = len < (size_t)n - 1 ? len : (size_t)n - 1;
+        memmove(buf, buf + len - kept, kept);
+    }
+    free(buf);
+    fclose(f);
+    return found;
+}
+
 // From the program as it is built: the full one, when it is there and not older.
 void revo_start_full_program(int argc, char **argv) {
     (void)argc;
@@ -185,7 +209,7 @@ void revo_start_full_program(int argc, char **argv) {
         !full_path(full, sizeof full))
         return;
     const long long a = modified(self), b = modified(full);
-    if (b < 0 || b < a) return;
+    if (b < 0 || b < a || !same_version(full)) return;
     fflush(NULL);
 #ifdef _WIN32
     STARTUPINFOA si = {sizeof si};

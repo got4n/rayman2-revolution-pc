@@ -452,7 +452,7 @@ bool unzip(const std::wstring &zip, const std::wstring &into, std::string *error
         *error = "Windows' tar.exe is missing (Windows 10 1803 or later has it)";
         return false;
     }
-    std::wstring cmd = L"\"" + tar + L"\" -xf \"" + zip + L"\" -C \"" + into + L"\"";
+    std::wstring cmd = L"\"" + tar + L"\" -xmf \"" + zip + L"\" -C \"" + into + L"\"";
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
@@ -818,9 +818,18 @@ void start_install() {
     }
 }
 
+std::wstring plain_program(const std::wstring &exe) {
+    const size_t slash = exe.find_last_of(L"\\/"), dot = exe.rfind(L'.');
+    const size_t end = dot != std::wstring::npos && (slash == std::wstring::npos || dot > slash) ? dot : exe.size();
+    const std::wstring full = L"-full";
+    if (end < full.size() || exe.compare(end - full.size(), full.size(), full)) return exe;
+    const std::wstring plain = exe.substr(0, end - full.size()) + exe.substr(end);
+    return exists(plain) ? plain : exe;
+}
+
 void restart_at_exit() {
     if (!g_restart) return;
-    const std::wstring exe = exe_path();
+    const std::wstring exe = plain_program(exe_path());
     std::wstring cmd = GetCommandLineW();
     STARTUPINFOW si = {};
     si.cb = sizeof si;
