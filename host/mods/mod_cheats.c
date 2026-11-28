@@ -36,7 +36,7 @@ enum {
 #define NEAREST 4.0f
 #define FARTHEST 10.0f
 
-static bool in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI && !(a & 3); }
+static bool in_ram(u32 a) { return revo_guest_readable(a, 4) && !(a & 3); }
 
 static float f32_at(u32 a) {
     u32 v = rd32(a);

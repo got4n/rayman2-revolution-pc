@@ -21,7 +21,7 @@ enum {
 u64 revo_frame_count(void);
 int gli_hud_words_make(const char *latin1);
 
-static int in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI; }
+static int in_ram(u32 a) { return revo_guest_readable(a, 1); }
 
 static u32 then_node(PcAddress condition, int n) {
     const u32 depth = rd8(condition + NODE_DEPTH);

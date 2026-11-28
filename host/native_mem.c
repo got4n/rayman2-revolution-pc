@@ -8,6 +8,26 @@
 #define BLOCK_SIZE 0x80000000u
 #define GRANULE 0x10000u
 
+static uint8_t g_mapped[BLOCK_SIZE / GRANULE / 8];
+
+static void mark(uintptr_t base, uintptr_t from, uintptr_t to, int on) {
+    if (to <= from || from < base) return;
+    const uintptr_t last = (to - base + GRANULE - 1) / GRANULE;
+    for (uintptr_t g = (from - base) / GRANULE; g < last && g < BLOCK_SIZE / GRANULE; g++) {
+        if (on) g_mapped[g >> 3] |= (uint8_t)(1u << (g & 7));
+        else g_mapped[g >> 3] &= (uint8_t)~(1u << (g & 7));
+    }
+}
+
+int revo_guest_readable(uint32_t a, uint32_t n) {
+    if (!n) n = 1;
+    if (a < GRANULE || (uint64_t)a + n > BLOCK_SIZE) return 0;
+    const uint32_t last = (uint32_t)(((uint64_t)a + n - 1) / GRANULE);
+    for (uint32_t g = a / GRANULE; g <= last; g++)
+        if (!(g_mapped[g >> 3] >> (g & 7) & 1)) return 0;
+    return 1;
+}
+
 #ifdef _WIN32
 #include <windows.h>
 
@@ -20,6 +40,37 @@ uint8_t *revo_native_base(void) { return (uint8_t *)&__ImageBase; }
 
 uint8_t *const revo_base = (uint8_t *)&__ImageBase;
 
+typedef struct { uintptr_t at, size; } Span;
+enum { SPANS = 512 };
+static Span g_spare[SPANS];
+static int g_nspare;
+static Span g_given[SPANS];
+static int g_ngiven;
+static uintptr_t g_reserved;
+
+static void spare_add(uintptr_t at, uintptr_t size) {
+    int i = 0;
+    while (i < g_nspare && g_spare[i].at < at) i++;
+    if (i > 0 && g_spare[i - 1].at + g_spare[i - 1].size == at) {
+        g_spare[i - 1].size += size;
+        if (i < g_nspare && at + size == g_spare[i].at) {
+            g_spare[i - 1].size += g_spare[i].size;
+            for (int k = i; k + 1 < g_nspare; k++) g_spare[k] = g_spare[k + 1];
+            g_nspare--;
+        }
+        return;
+    }
+    if (i < g_nspare && at + size == g_spare[i].at) {
+        g_spare[i].at = at;
+        g_spare[i].size += size;
+        return;
+    }
+    if (g_nspare == SPANS) return;
+    for (int k = g_nspare; k > i; k--) g_spare[k] = g_spare[k - 1];
+    g_spare[i] = (Span){at, size};
+    g_nspare++;
+}
+
 static void block_init(void) {
     if (g_end) return;
     const uintptr_t base = (uintptr_t)&__ImageBase;
@@ -30,30 +81,109 @@ static void block_init(void) {
     }
     g_next = (base + nt->OptionalHeader.SizeOfImage + GRANULE - 1) & ~(uintptr_t)(GRANULE - 1);
     g_end = base + BLOCK_SIZE;
+    mark(base, base, base + nt->OptionalHeader.SizeOfImage, 1);
+    for (uintptr_t a = g_next; a < g_end;) {
+        MEMORY_BASIC_INFORMATION mi;
+        if (!VirtualQuery((void *)a, &mi, sizeof mi)) break;
+        uintptr_t end = (uintptr_t)mi.BaseAddress + mi.RegionSize;
+        if (end > g_end) end = g_end;
+        if (mi.State == MEM_FREE) {
+            const uintptr_t from = (a + GRANULE - 1) & ~(uintptr_t)(GRANULE - 1), to = end & ~(uintptr_t)(GRANULE - 1);
+            if (to > from && VirtualAlloc((void *)from, to - from, MEM_RESERVE, PAGE_NOACCESS)) {
+                spare_add(from, to - from);
+                g_reserved += to - from;
+            }
+        }
+        a = end;
+    }
+}
+
+__attribute__((constructor)) static void reserve_at_start(void) {
+    AcquireSRWLockExclusive(&g_lock);
+    block_init();
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+void revo_log(const char *fmt, ...);
+
+static void tell_block(size_t size) {
+    const uintptr_t base = (uintptr_t)&__ImageBase;
+    revo_log("[mem] no %u KB left in the game's block (%u MB reserved at start, %d spare parts, %d given):",
+             (unsigned)(size >> 10), (unsigned)(g_reserved >> 20), g_nspare, g_ngiven);
+    int lines = 0;
+    for (uintptr_t a = base; a < base + BLOCK_SIZE && lines < 80;) {
+        MEMORY_BASIC_INFORMATION mi;
+        if (!VirtualQuery((void *)a, &mi, sizeof mi)) break;
+        const uintptr_t at = (uintptr_t)mi.BaseAddress, end = at + mi.RegionSize;
+        if (mi.State != MEM_FREE) {
+            char name[MAX_PATH] = "";
+            if (mi.Type == MEM_IMAGE) GetModuleFileNameA((HMODULE)mi.AllocationBase, name, sizeof name);
+            revo_log("[mem]   %08llX-%08llX %6llu KB %s %s %s", (unsigned long long)(at - base),
+                     (unsigned long long)(end - base), (unsigned long long)(mi.RegionSize >> 10),
+                     mi.State == MEM_COMMIT ? "committed" : "reserved",
+                     mi.Type == MEM_IMAGE ? "image" : mi.Type == MEM_MAPPED ? "mapped" : "private", name);
+            lines++;
+        }
+        a = end;
+    }
 }
 
 void *revo_low_alloc(size_t size) {
     size = (size + GRANULE - 1) & ~(size_t)(GRANULE - 1);
     AcquireSRWLockExclusive(&g_lock);
     block_init();
+    static int told;
+    if (!told) {
+        told = 1;
+        revo_log("[mem] %u MB of the game's block reserved at start, in %d parts", (unsigned)(g_reserved >> 20),
+                 g_nspare);
+    }
     void *p = NULL;
+    for (int i = 0; i < g_nspare && !p; i++) {
+        if (g_spare[i].size < size || !VirtualAlloc((void *)g_spare[i].at, size, MEM_COMMIT, PAGE_READWRITE)) continue;
+        p = (void *)g_spare[i].at;
+        if (g_ngiven < SPANS) g_given[g_ngiven++] = (Span){g_spare[i].at, size};
+        g_spare[i].at += size;
+        g_spare[i].size -= size;
+        if (!g_spare[i].size) {
+            for (int k = i; k + 1 < g_nspare; k++) g_spare[k] = g_spare[k + 1];
+            g_nspare--;
+        }
+    }
     uintptr_t a = g_next;
     while (!p && a + size <= g_end) {
         MEMORY_BASIC_INFORMATION mi;
         if (!VirtualQuery((void *)a, &mi, sizeof mi)) break;
         const uintptr_t end = (uintptr_t)mi.BaseAddress + mi.RegionSize;
-        if (mi.State == MEM_FREE && end >= a + size) {
-            p = VirtualAlloc((void *)a, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-            if (p) g_next = a + size;
-        }
+        if (mi.State == MEM_FREE && end >= a + size) p = VirtualAlloc((void *)a, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if (!p) a = (end + GRANULE - 1) & ~(uintptr_t)(GRANULE - 1);
     }
+    if (p) mark((uintptr_t)&__ImageBase, (uintptr_t)p, (uintptr_t)p + size, 1);
+    else tell_block(size);
     ReleaseSRWLockExclusive(&g_lock);
     return p;
 }
 
 void revo_low_free(void *p) {
-    if (p) VirtualFree(p, 0, MEM_RELEASE);
+    if (!p) return;
+    AcquireSRWLockExclusive(&g_lock);
+    for (int i = 0; i < g_ngiven; i++) {
+        if (g_given[i].at != (uintptr_t)p) continue;
+        const Span s = g_given[i];
+        g_given[i] = g_given[--g_ngiven];
+        mark((uintptr_t)&__ImageBase, s.at, s.at + s.size, 0);
+        VirtualFree(p, s.size, MEM_DECOMMIT);
+        spare_add(s.at, s.size);
+        ReleaseSRWLockExclusive(&g_lock);
+        return;
+    }
+    MEMORY_BASIC_INFORMATION mi;
+    uintptr_t end = (uintptr_t)p;
+    while (VirtualQuery((void *)end, &mi, sizeof mi) && mi.AllocationBase == p)
+        end = (uintptr_t)mi.BaseAddress + mi.RegionSize;
+    mark((uintptr_t)&__ImageBase, (uintptr_t)p, end, 0);
+    VirtualFree(p, 0, MEM_RELEASE);
+    ReleaseSRWLockExclusive(&g_lock);
 }
 
 #elif defined(__APPLE__)
@@ -123,6 +253,7 @@ static void block_init(void) {
     }
     g_next = (end + GRANULE - 1) & ~(uintptr_t)(GRANULE - 1);
     g_end = base + BLOCK_SIZE;
+    mark(base, base, end, 1);
 }
 
 void *revo_low_alloc(size_t size) {
@@ -154,6 +285,7 @@ void *revo_low_alloc(size_t size) {
             g_regions = realloc(g_regions, g_cap * sizeof *g_regions);
         }
         g_regions[g_count++] = (Region){(uintptr_t)p, size};
+        mark((uintptr_t)&_mh_execute_header, (uintptr_t)p, (uintptr_t)p + size, 1);
     }
     pthread_mutex_unlock(&g_lock);
     return p;
@@ -164,6 +296,7 @@ void revo_low_free(void *p) {
     pthread_mutex_lock(&g_lock);
     for (size_t i = 0; i < g_count; i++) {
         if (g_regions[i].at == (uintptr_t)p) {
+            mark((uintptr_t)&_mh_execute_header, g_regions[i].at, g_regions[i].at + g_regions[i].size, 0);
             mach_vm_deallocate(mach_task_self(), g_regions[i].at, g_regions[i].size);
             g_regions[i] = g_regions[--g_count];
             break;
@@ -205,6 +338,7 @@ static void block_init(void) {
     }
     g_next = ((uintptr_t)_end + GRANULE - 1) & ~(uintptr_t)(GRANULE - 1);
     g_end = base + BLOCK_SIZE;
+    mark(base, base, (uintptr_t)_end, 1);
 }
 
 void *revo_low_alloc(size_t size) {
@@ -232,6 +366,7 @@ void *revo_low_alloc(size_t size) {
             g_regions = realloc(g_regions, g_cap * sizeof *g_regions);
         }
         g_regions[g_count++] = (Region){(uintptr_t)p, size};
+        mark((uintptr_t)__executable_start, (uintptr_t)p, (uintptr_t)p + size, 1);
     }
     pthread_mutex_unlock(&g_lock);
     return p;
@@ -242,6 +377,7 @@ void revo_low_free(void *p) {
     pthread_mutex_lock(&g_lock);
     for (size_t i = 0; i < g_count; i++) {
         if (g_regions[i].at == (uintptr_t)p) {
+            mark((uintptr_t)__executable_start, g_regions[i].at, g_regions[i].at + g_regions[i].size, 0);
             munmap((void *)g_regions[i].at, g_regions[i].size);
             g_regions[i] = g_regions[--g_count];
             break;

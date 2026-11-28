@@ -34,7 +34,7 @@ static void set_f32(u32 a, float f) {
     wr32(a, v);
 }
 
-static int in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI && !(a & 3); }
+static int in_ram(u32 a) { return revo_guest_readable(a, 4) && !(a & 3); }
 
 static u32 parameters_of(u32 update) {
     u32 dynamics = rd32(update + UPDATE_DYNAMICS);

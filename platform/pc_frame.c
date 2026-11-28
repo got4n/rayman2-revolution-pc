@@ -6,16 +6,25 @@ enum { QUARTERS = 240 };
 
 static uint64_t frame_start;
 
+static int sixty = -1;
+
+int revo_script_at_30hz(void);
+
+int revo_sixty(void)
+{
+    return sixty < 0 ? revo_mod(REVO_MOD_60FPS) : sixty;
+}
+
 int32_t pc_frame_vblanks(void)
 {
     const uint64_t passed = revo_frame_count() - frame_start;
 
-    return (int32_t) (revo_mod(REVO_MOD_60FPS) ? passed * 2 : passed);
+    return (int32_t) (revo_sixty() ? passed * 2 : passed);
 }
 
 int32_t pc_frame_units_per_tick(void)
 {
-    return revo_mod(REVO_MOD_60FPS) ? 2 : 1;
+    return revo_sixty() ? 2 : 1;
 }
 
 int32_t pc_frame_tick_parts(void)
@@ -51,6 +60,7 @@ static uint64_t frame_vblank_ns;
 
 void pc_frame_start(void)
 {
+    sixty = revo_mod(REVO_MOD_60FPS) && !revo_script_at_30hz();
     frame_start = revo_frame_count();
     frame_start_quarters = revo_time_ticks(QUARTERS);
     frame_vblank_ns = revo_vblank_ns();
@@ -58,7 +68,7 @@ void pc_frame_start(void)
 
 void pc_frame_wait_half(void)
 {
-    const uint64_t half = revo_mod(REVO_MOD_60FPS) ? 2 : 4;
+    const uint64_t half = revo_sixty() ? 2 : 4;
 
     if (revo_fast_forwarding()) {
         while (revo_time_ticks(QUARTERS) - frame_start_quarters < half) {

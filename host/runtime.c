@@ -15,21 +15,101 @@
 u8 *RAM;
 int revo_trace = 0;
 
+static pthread_mutex_t g_log_lock;
+static pthread_once_t g_log_once = PTHREAD_ONCE_INIT;
+static FILE *g_log_file;
+static char g_log_path[1200];
+static char g_log_early[1 << 16];
+static size_t g_log_early_used;
+static int g_log_off;
+
+static void log_lock_init(void) {
+    pthread_mutexattr_t a;
+    pthread_mutexattr_init(&a);
+    pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&g_log_lock, &a);
+    pthread_mutexattr_destroy(&a);
+}
+
 void revo_log(const char *fmt, ...) {
+    char small[1024];
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    int n = vsnprintf(small, sizeof small, fmt, ap);
     va_end(ap);
+    if (n < 0) return;
+    char *line = small;
+    if ((size_t)n >= sizeof small) {
+        line = malloc((size_t)n + 1);
+        if (line) {
+            va_start(ap, fmt);
+            vsnprintf(line, (size_t)n + 1, fmt, ap);
+            va_end(ap);
+        } else {
+            line = small;
+            n = (int)sizeof small - 1;
+        }
+    }
+    pthread_once(&g_log_once, log_lock_init);
+    pthread_mutex_lock(&g_log_lock);
+    fwrite(line, 1, (size_t)n, stderr);
     fputc('\n', stderr);
+    if (g_log_file) {
+        fwrite(line, 1, (size_t)n, g_log_file);
+        fputc('\n', g_log_file);
+        fflush(g_log_file);
+    } else if (!g_log_off && g_log_early_used + (size_t)n + 1 <= sizeof g_log_early) {
+        memcpy(g_log_early + g_log_early_used, line, (size_t)n);
+        g_log_early_used += (size_t)n;
+        g_log_early[g_log_early_used++] = '\n';
+    }
+    pthread_mutex_unlock(&g_log_lock);
+    if (line != small) free(line);
+}
+
+void revo_log_open(const char *dir) {
+    const char *e = getenv("REVO_LOG");
+    pthread_once(&g_log_once, log_lock_init);
+    pthread_mutex_lock(&g_log_lock);
+    if (!g_log_file && !g_log_off) {
+        if (e && !*e) {
+            g_log_off = 1;
+        } else {
+            if (e) {
+                snprintf(g_log_path, sizeof g_log_path, "%s", e);
+            } else {
+                char old[1300];
+                snprintf(g_log_path, sizeof g_log_path, "%s/revolution.log", dir);
+                snprintf(old, sizeof old, "%s/revolution-previous.log", dir);
+                remove(old);
+                rename(g_log_path, old);
+            }
+            g_log_file = revo_fopen(g_log_path, "w");
+            if (g_log_file) {
+                fwrite(g_log_early, 1, g_log_early_used, g_log_file);
+                fflush(g_log_file);
+            }
+        }
+        g_log_early_used = 0;
+    }
+    pthread_mutex_unlock(&g_log_lock);
+}
+
+const char *revo_log_path(void) { return g_log_file ? g_log_path : ""; }
+
+void revo_log_crash(const char *text, size_t n) {
+    if (!g_log_file) return;
+    fwrite(text, 1, n, g_log_file);
+    fflush(g_log_file);
 }
 
 void revo_fatal(const char *fmt, ...) {
+    char msg[2048];
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stderr, "FATAL: ");
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
+    revo_log("FATAL: %s", msg);
     revo_dump_ring();
     exit(2);
 }

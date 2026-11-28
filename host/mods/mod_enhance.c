@@ -22,7 +22,7 @@ u64 revo_time_ticks(u32 frequency);
 u64 revo_frame_count(void);
 void revo_rumble(int strength, int ms);
 
-static bool in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI; }
+static bool in_ram(u32 a) { return revo_guest_readable(a, 1); }
 
 static u32 standard_game(void) {
     const u32 so = rd32(MAIN_ACTORS);

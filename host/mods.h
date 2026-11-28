@@ -20,6 +20,7 @@ enum {
 };
 
 int revo_mod(int mod);
+int revo_sixty(void);
 
 enum {
     REVO_SET_FOV,

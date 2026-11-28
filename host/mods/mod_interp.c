@@ -42,7 +42,7 @@ typedef struct Frame {
     u32 mask;
 } Frame;
 
-static bool in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI; }
+static bool in_ram(u32 a) { return revo_guest_readable(a, 1); }
 static bool matrix_at(u32 a) { return in_ram(a) && !(a & 3) && in_ram(a + MATRIX_SIZE); }
 
 static Frame g_frames[2];
@@ -75,7 +75,8 @@ static const Kept *find(const Frame *f, u32 so) {
 
 int32_t pc_inbetween_wanted(void) {
     extern int revo_fast_forwarding(void);
-    const bool on = revo_mod(REVO_MOD_INTERPOLATION) && !revo_fast_forwarding();
+    const bool on = (revo_mod(REVO_MOD_INTERPOLATION) || (revo_mod(REVO_MOD_60FPS) && !revo_sixty())) &&
+                    !revo_fast_forwarding();
     if (!on) g_kept_frames = 0;
     return on;
 }

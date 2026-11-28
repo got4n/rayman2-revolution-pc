@@ -213,6 +213,7 @@ static void resolve(void) {
 void revo_user_dir(char *out, size_t size) {
     if (!g_dir[0]) {
         resolve();
+        revo_log_open(g_dir);
         revo_log("[user] the player's folder: %s", g_dir);
     }
     snprintf(out, size, "%s", g_dir);

@@ -456,6 +456,49 @@ static void mark(const char *dir, const char *source) {
     fclose(m);
 }
 
+static void copy_disc_files(const char *root, const char *source) {
+    char disc[1200], marker[1300];
+    snprintf(disc, sizeof disc, "%s/DISC", root);
+    if (up_to_date(disc, source)) return;
+    snprintf(marker, sizeof marker, "%s/.extracted", disc);
+    remove(marker);
+    u32 size;
+    const char *name;
+    for (int i = 0; (name = revo_disc_file(i, &size)); i++) {
+        const size_t len = strlen(name);
+        if (len > 3 && !strcmp(name + len - 3, ".BF")) continue;
+        char path[1300];
+        snprintf(path, sizeof path, "%s/%s", disc, name);
+        char *last = NULL;
+        for (char *c = path + strlen(disc) + 1; *c; c++)
+            if (*c == '\\') *(last = c) = '/';
+        if (last) {
+            *last = 0;
+            const int made = make_dirs(path);
+            *last = '/';
+            if (!made) return;
+        } else if (!make_dirs(disc)) {
+            return;
+        }
+        u32 n = 0;
+        u8 *data = revo_disc_load(name, &n);
+        FILE *out = data ? revo_fopen(path, "wb") : NULL;
+        const int ok = out && fwrite(data, 1, n, out) == n;
+        if (out && fclose(out) != 0) {
+            free(data);
+            revo_log("[game] cannot write %s", path);
+            return;
+        }
+        free(data);
+        if (!ok) {
+            revo_log("[game] cannot write %s", path);
+            return;
+        }
+    }
+    mark(disc, source);
+    revo_log("[game] the disc's other files copied to %s", disc);
+}
+
 static void use_extracted(const char *source) {
     for (int fallback = 0; fallback < 2; fallback++) {
         char dir[1100], root[1100], sound[1200], readable[1100];
@@ -528,6 +571,7 @@ static void use_extracted(const char *source) {
             if (cancelled) return;
             if (!game) continue;
         }
+        copy_disc_files(root, source);
         readable_dir(dir, readable, sizeof readable);
         if (!readable[0]) continue;
         snprintf(revo_bf_dir_default, sizeof revo_bf_dir_default, "%s", readable);
@@ -536,6 +580,42 @@ static void use_extracted(const char *source) {
         revo_disc_open(source);
         return;
     }
+}
+
+static int check(const char *source, char *why, size_t size);
+
+/* The game's files taken out of the disc: GAME and SOUND's bigfiles, and DISC with the rest of the disc. */
+static int open_installed(const char *source) {
+    for (int fallback = 0; fallback < 2; fallback++) {
+        char dir[1100], root[1100], sound[1200], disc[1200], readable[1100], why[1400];
+        extract_dir(dir, sizeof dir, fallback);
+        snprintf(root, sizeof root, "%.*s", (int)(strlen(dir) - 5), dir);
+        snprintf(sound, sizeof sound, "%s/SOUND", root);
+        snprintf(disc, sizeof disc, "%s/DISC", root);
+        if (!up_to_date(dir, source) || !up_to_date(disc, source)) continue;
+        readable_dir(dir, readable, sizeof readable);
+        if (!readable[0]) continue;
+        snprintf(revo_bf_dir_default, sizeof revo_bf_dir_default, "%s", readable);
+        readable_dir(sound, readable, sizeof readable);
+        snprintf(revo_sound_dir_default, sizeof revo_sound_dir_default, "%s", readable);
+        readable_dir(disc, readable, sizeof readable);
+        int complete = readable[0] && check(readable, why, sizeof why);
+        u32 size;
+        const char *name;
+        for (int i = 0; complete && (name = revo_disc_file(i, &size)); i++) {
+            const size_t len = strlen(name);
+            if (strncmp(name, "SOUND\\", 6) || len < 11 || strcmp(name + len - 4, ".DSC")) continue;
+            char folder[1300];
+            snprintf(folder, sizeof folder, "%s/%.*s", sound, (int)(len - 10), name + 6);
+            complete = up_to_date(folder, source);
+        }
+        if (complete) {
+            revo_log("[game] %s is not there: the game's files in %s are used", source, root);
+            return 1;
+        }
+        revo_bf_dir_default[0] = revo_sound_dir_default[0] = 0;
+    }
+    return 0;
 }
 
 static void kept_path(char *out, size_t size) {
@@ -630,6 +710,7 @@ int revo_game_open(int argc, char **argv, const char *dev_default) {
             use_extracted(source);
             return 1;
         }
+        if (open_installed(source)) return 1;
         revo_log("[game] %s: no longer the game", source);
     } else if (dev_default && *dev_default && revo_disc_open(dev_default)) {
         return 1;

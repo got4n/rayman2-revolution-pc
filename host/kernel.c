@@ -209,7 +209,7 @@ static void skip_cutscenes(void) {
 void revo_enhance_vblank(void);
 
 static void sixty_fps(void) {
-    if (revo_mod(REVO_MOD_60FPS)) wr32(GAME_VBLANK_COUNTER, rd32(GAME_VBLANK_COUNTER) + 1);
+    if (revo_sixty()) wr32(GAME_VBLANK_COUNTER, rd32(GAME_VBLANK_COUNTER) + 1);
 }
 
 static int g_vblank_sema;

@@ -16,7 +16,7 @@ enum {
 
 static atomic_int g_lums = -1, g_cages = -1;
 
-static int in_ram(u32 a) { return a >= REVO_GAME_LO && a < REVO_GAME_HI && !(a & 3); }
+static int in_ram(u32 a) { return revo_guest_readable(a, 4) && !(a & 3); }
 
 typedef struct { u32 vars, buf; } Dsg;
 

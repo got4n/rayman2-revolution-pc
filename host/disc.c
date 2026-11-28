@@ -410,12 +410,16 @@ static void sound_from_folders(u32 *lsn) {
     for (int i = 0; i < n; i++) {
         const char *name = g_disc[i].name;
         const size_t len = strlen(name);
-        if (strncmp(name, "SOUND\\", 6) || len < 10 || strcmp(name + len - 3, ".BF")) continue;
+        const int is_bf = len >= 10 && !strcmp(name + len - 3, ".BF");
+        const int is_dsc = len >= 11 && !strcmp(name + len - 4, ".DSC");
+        if (strncmp(name, "SOUND\\", 6) || (!is_bf && !is_dsc)) continue;
+        const int stem = (int)(len - (is_bf ? 3 : 4));
         char bf_name[64], dsc_name[64], folder[1100];
-        snprintf(bf_name, sizeof bf_name, "%s", name);
-        snprintf(dsc_name, sizeof dsc_name, "%.*s.DSC", (int)(len - 3), name);
+        snprintf(bf_name, sizeof bf_name, "%.*s.BF", stem, name);
+        if (is_dsc && disc_find(bf_name)) continue;
+        snprintf(dsc_name, sizeof dsc_name, "%.*s.DSC", stem, name);
         const char *base = name + 6;
-        const int base_len = (int)(len - 9);
+        const int base_len = stem - 6;
         struct stat st;
         snprintf(folder, sizeof folder, "%s/SOUND/%.*s", revo_assets_dir, base_len, base);
         if (revo_disc_image[0] || stat(folder, &st) || !S_ISDIR(st.st_mode)) {

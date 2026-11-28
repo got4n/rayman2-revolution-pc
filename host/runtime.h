@@ -9,6 +9,9 @@ extern "C" {
 
 void revo_user_dir(char *out, size_t size);
 void revo_log(const char *fmt, ...);
+void revo_log_open(const char *dir);
+const char *revo_log_path(void);
+void revo_log_crash(const char *text, size_t n);
 void revo_fatal(const char *fmt, ...) __attribute__((noreturn));
 void revo_dump_ring(void);
 const char *revo_name_of(u32 addr);

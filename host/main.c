@@ -183,6 +183,7 @@ static LONG WINAPI on_native_fault(EXCEPTION_POINTERS *e) {
         n += snprintf(buf + n, sizeof buf - n, "\n");
         DWORD w;
         WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, (DWORD)n, &w, NULL);
+        revo_log_crash(buf, (size_t)n);
         return EXCEPTION_CONTINUE_SEARCH;
     }
     int n = snprintf(buf, sizeof buf, "[crash] exception %08lX at %llX (link %llX), %s 0x%llX\n"
@@ -206,12 +207,13 @@ static LONG WINAPI on_native_fault(EXCEPTION_POINTERS *e) {
     n += snprintf(buf + n, sizeof buf - n, "\n");
     DWORD w;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, (DWORD)n, &w, NULL);
+    revo_log_crash(buf, (size_t)n);
     TerminateProcess(GetCurrentProcess(), 128);
     return EXCEPTION_CONTINUE_SEARCH;
 }
 static LONG WINAPI on_crash(EXCEPTION_POINTERS *e) {
-    fprintf(stderr, "[crash] exception %08lX at host address %p\n", (unsigned long)e->ExceptionRecord->ExceptionCode,
-            e->ExceptionRecord->ExceptionAddress);
+    revo_log("[crash] exception %08lX at host address %p", (unsigned long)e->ExceptionRecord->ExceptionCode,
+             e->ExceptionRecord->ExceptionAddress);
     revo_dump_ring();
     _exit(128);
     return EXCEPTION_EXECUTE_HANDLER;
@@ -219,7 +221,7 @@ static LONG WINAPI on_crash(EXCEPTION_POINTERS *e) {
 #else
 static void on_crash(int sig, siginfo_t *si, void *uc) {
     (void)uc;
-    fprintf(stderr, "[crash] signal %d at host address %p\n", sig, si->si_addr);
+    revo_log("[crash] signal %d at host address %p", sig, si->si_addr);
     dump_native_stack(sig);
     revo_dump_ring();
     _exit(128 + sig);

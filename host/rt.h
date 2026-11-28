@@ -25,6 +25,8 @@ extern u8 *RAM;
 #define REVO_GAME_LO 0x00010000u
 #define REVO_GAME_HI 0x80000000u
 
+int revo_guest_readable(u32 a, u32 n);
+
 u32 mem_slow_rd32(u32 a);
 u64 mem_slow_rd64(u32 a);
 u16 mem_slow_rd16(u32 a);
